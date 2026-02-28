@@ -1,0 +1,114 @@
+{% extends "./layout.html" %}
+
+{% block title %}Configuración{% endblock %}
+
+{% block body %}
+<section class="page-intro">
+    <p class="kicker">Configuración</p>
+    <h1>Configuración</h1>
+</section>
+
+<section class="card">
+    <h2>Configuración de administrador</h2>
+    <form method="post" action="{{ url_for('settings_admin_password') }}" class="inline-form-wrap">
+        <input type="password" name="current_password" placeholder="Contraseña actual" required>
+        <input type="password" name="new_password" placeholder="Nueva contraseña" required>
+        <input type="password" name="confirm_password" placeholder="Confirmar nueva contraseña" required>
+        <button type="submit">Cambiar contraseña</button>
+    </form>
+</section>
+
+<section class="card">
+    <h2>Encargados (descuento de sesiones)</h2>
+    <form method="post" action="{{ url_for('settings_staff_create') }}" class="inline-form-wrap">
+        <input type="text" name="username" placeholder="Usuario encargado" required>
+        <input type="password" name="password" placeholder="Contraseña temporal" required>
+        <button type="submit">Crear encargado</button>
+    </form>
+
+    <div class="table-wrap">
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Usuario</th>
+                <th>Estado</th>
+                <th>Creado</th>
+                <th>Acciones</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for user in staff_users %}
+            <tr>
+                <td>{{ user.id }}</td>
+                <td>{{ user.username }}</td>
+                <td>{{ 'Activo' if user.is_active else 'Inactivo' }}</td>
+                <td>{{ user.created_at }}</td>
+                <td class="actions-row">
+                    <form method="post" action="{{ url_for('settings_staff_toggle', user_id=user.id) }}">
+                        <button type="submit">{{ 'Desactivar' if user.is_active else 'Activar' }}</button>
+                    </form>
+                    <form method="post" action="{{ url_for('settings_staff_delete', user_id=user.id) }}" onsubmit="return confirm('¿Eliminar encargado?');">
+                        <button type="submit" class="danger-btn">Eliminar</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</section>
+
+<section class="card">
+    <h2>Configuración de planes</h2>
+    <form method="post" action="{{ url_for('settings_plans_create') }}" class="inline-form-wrap">
+        <input type="text" name="name" placeholder="Nombre del plan" required>
+        <input type="number" name="sessions_per_month" min="1" placeholder="Sesiones/mes" required>
+        <input type="number" name="price" min="0" step="0.01" placeholder="Precio" required>
+        <button type="submit">Crear plan</button>
+    </form>
+</section>
+
+<section class="card">
+    <div class="table-wrap">
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Nombre</th>
+                <th>Sesiones/mes</th>
+                <th>Precio</th>
+                <th>Activo</th>
+                <th>Acciones</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for plan in plans %}
+            <tr>
+                <td>{{ plan.id }}</td>
+                <td>
+                    <form method="post" action="{{ url_for('settings_plans_edit', plan_id=plan.id) }}" class="inline-form-wrap">
+                        <input type="text" name="name" value="{{ plan.name }}" required>
+                        <input type="number" name="sessions_per_month" value="{{ plan.sessions_per_month }}" min="1" required>
+                        <input type="number" name="price" value="{{ plan.price }}" min="0" step="0.01" required>
+                        <button type="submit">Guardar</button>
+                    </form>
+                </td>
+                <td>{{ plan.sessions_per_month }}</td>
+                <td>${{ "%.2f"|format(plan.price) }}</td>
+                <td>{{ 'Sí' if plan.is_active else 'No' }}</td>
+                <td class="actions-row">
+                    <form method="post" action="{{ url_for('settings_plans_toggle', plan_id=plan.id) }}">
+                        <button type="submit">{{ 'Desactivar' if plan.is_active else 'Activar' }}</button>
+                    </form>
+                    <form method="post" action="{{ url_for('settings_plans_delete', plan_id=plan.id) }}">
+                        <button type="submit" class="danger-btn">Eliminar</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</section>
+{% endblock %}

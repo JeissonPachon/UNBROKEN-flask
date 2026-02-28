@@ -1,0 +1,38 @@
+{% extends "./layout.html" %}
+
+{% block title %}Registro de miembro{% endblock %}
+
+{% block body %}
+<section class="page-intro">
+    <p class="kicker">Nuevo registro</p>
+    <h1>Alta de miembro</h1>
+</section>
+
+<section class="card">
+    <h2>Datos del miembro</h2>
+    <form method="post" class="form-grid">
+        <input type="text" name="full_name" placeholder="Nombre completo" required>
+        <input type="text" name="document" placeholder="Documento" required>
+        <input type="text" name="phone" placeholder="Teléfono">
+        <input type="email" name="email" placeholder="Email">
+
+        <textarea name="injuries" placeholder="Lesiones"></textarea>
+        <textarea name="conditions_text" placeholder="Enfermedades o condiciones médicas"></textarea>
+
+        <input type="text" name="emergency_contact_name" placeholder="Contacto de emergencia - nombre">
+        <input type="text" name="emergency_contact_phone" placeholder="Contacto de emergencia - teléfono">
+
+        <select name="plan_id" required>
+            <option value="">Selecciona un plan</option>
+            {% for plan in plans %}
+            <option value="{{ plan.id }}">{{ plan.name }} ({{ plan.sessions_per_month }} sesiones)</option>
+            {% endfor %}
+        </select>
+
+        <div class="actions-row">
+            <button type="submit">Guardar miembro y activar plan</button>
+            <a href="{{ url_for('members_list') }}" class="secondary-link">Ver miembros</a>
+        </div>
+    </form>
+</section>
+{% endblock %}

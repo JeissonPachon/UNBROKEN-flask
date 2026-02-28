@@ -1,0 +1,330 @@
+{% extends "./layout.html" %}
+
+{% block title %}Panel Admin{% endblock %}
+
+{% block body %}
+<div class="panel-view">
+<section class="page-intro">
+    <p class="kicker">Centro de control</p>
+    <h1>Panel administrativo</h1>
+    {% if not can_manage %}
+    <p class="muted-text">Modo encargado: solo consulta y descuento de sesiones.</p>
+    {% endif %}
+</section>
+
+<section class="grid-two">
+    <div class="card stat-card">
+        <h2>Total miembros</h2>
+        <p class="big-number">{{ members_count }}</p>
+    </div>
+    <div class="card stat-card">
+        <h2>Suscripciones activas</h2>
+        <p class="big-number">{{ active_count }}</p>
+    </div>
+</section>
+
+<section class="card">
+    <div class="space-between">
+        <h2>Comportamiento mensual</h2>
+        <span class="muted-text">Últimos 12 meses</span>
+    </div>
+    {% if drop_alert %}
+        <p class="flash flash-warning">Atención: este mes va {{ drop_alert.drop_pct }}% por debajo del promedio reciente ({{ drop_alert.avg }}).</p>
+    {% endif %}
+    <div class="chart-wrap">
+        <canvas id="monthlyTrendChart"></canvas>
+    </div>
+</section>
+
+<section class="grid-two">
+    <div class="card">
+        <h2>Consultar sesiones de un usuario</h2>
+        <form method="get" action="{{ url_for('dashboard') }}" class="panel-form-inline">
+            <input type="text" name="document" placeholder="Documento" value="{{ lookup_document or '' }}" required>
+            <button type="submit">Buscar</button>
+        </form>
+
+        {% if lookup_document %}
+            {% if member_lookup %}
+                <div class="card lookup-result-card">
+                    <p><strong>Nombre:</strong> {{ member_lookup.full_name }}</p>
+                    <p><strong>Documento:</strong> {{ member_lookup.document }}</p>
+                    <p><strong>Plan:</strong> {{ member_lookup.plan_name or '-' }}</p>
+                    <p><strong>Sesiones restantes:</strong> {{ member_lookup.remaining_sessions if member_lookup.remaining_sessions is not none else '-' }}</p>
+                    <p><strong>Estado:</strong> {{ member_lookup.status or '-' }}</p>
+                    <p><strong>Vence:</strong> {{ member_lookup.end_date or '-' }}</p>
+                </div>
+            {% else %}
+                <p class="muted-text lookup-empty">No se encontró un usuario con ese documento.</p>
+            {% endif %}
+        {% endif %}
+    </div>
+
+    <div class="card">
+        <h2>Descontar sesión</h2>
+        <form id="useSessionForm" method="post" action="{{ url_for('use_session') }}" class="panel-form">
+            <input id="sessionDocumentInput" type="text" name="document" placeholder="Documento" required>
+            <button type="submit">Registrar ingreso</button>
+        </form>
+
+        <div class="qr-scan-box">
+            <div class="actions-row">
+                <button id="startQrScan" type="button">Escanear QR</button>
+                <button id="stopQrScan" type="button" class="secondary-link" style="display:none;">Detener</button>
+            </div>
+            <p id="qrScanStatus" class="muted-text">Escanea el QR de un miembro para descontar sesión automáticamente.</p>
+            <div id="qrReader" class="qr-reader" style="display:none;"></div>
+        </div>
+    </div>
+
+    {% if can_manage %}
+    <div class="card">
+        <h2>Renovar licencia</h2>
+        <form method="post" action="{{ url_for('renew_subscription') }}" class="panel-form">
+            <input type="text" name="document" placeholder="Documento" required>
+            <select name="plan_id">
+                <option value="">Plan actual</option>
+                {% for plan in plans %}
+                <option value="{{ plan.id }}">{{ plan.name }}</option>
+                {% endfor %}
+            </select>
+            <button type="submit">Renovar</button>
+        </form>
+    </div>
+    {% endif %}
+</section>
+
+{% if can_manage %}
+<section class="card">
+    <h2>Cancelar licencia</h2>
+    <form method="post" action="{{ url_for('cancel_subscription') }}" class="panel-form-inline">
+        <input type="text" name="document" placeholder="Documento" required>
+        <button type="submit" class="danger-btn">Cancelar licencia</button>
+    </form>
+</section>
+
+<section class="card">
+    <div class="space-between">
+        <h2>Últimos miembros</h2>
+        <a href="{{ url_for('members_new') }}" class="primary-link">Registrar miembro</a>
+    </div>
+    <div class="table-wrap">
+    <table>
+        <thead>
+            <tr>
+                <th>Nombre</th>
+                <th>Documento</th>
+                <th>Plan</th>
+                <th>Sesiones</th>
+                <th>Estado</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for member in recent_members %}
+            <tr>
+                <td>{{ member.full_name }}</td>
+                <td>{{ member.document }}</td>
+                <td>{{ member.plan_name or '-' }}</td>
+                <td>{{ member.remaining_sessions if member.remaining_sessions is not none else '-' }}</td>
+                <td>{{ member.status or '-' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</section>
+{% endif %}
+
+    <section class="card">
+        <h2>Trazabilidad de descuentos de sesiones</h2>
+        {% if recent_session_logs %}
+        <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Fecha</th>
+                    <th>Usuario</th>
+                    <th>Rol</th>
+                    <th>Miembro</th>
+                    <th>Documento</th>
+                    <th>Antes</th>
+                    <th>Después</th>
+                    <th>Acción</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for log in recent_session_logs %}
+                <tr>
+                    <td>{{ log.created_at }}</td>
+                    <td>{{ log.performed_by }}</td>
+                    <td>{{ log.performed_role }}</td>
+                    <td>{{ log.member_name or '-' }}</td>
+                    <td>{{ log.member_document or '-' }}</td>
+                    <td>{{ log.remaining_before if log.remaining_before is not none else '-' }}</td>
+                    <td>{{ log.remaining_after if log.remaining_after is not none else '-' }}</td>
+                    <td>{{ log.action }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+        {% else %}
+            <p class="muted-text">Aún no hay movimientos registrados.</p>
+        {% endif %}
+    </section>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+<script id="monthlyTrendData" type="application/json">
+{{ {
+    'labels': month_labels,
+    'members': month_members,
+    'sessions': month_sessions,
+    'average': trailing_avg
+}|tojson }}
+</script>
+<script>
+    (() => {
+        const canvas = document.getElementById('monthlyTrendChart');
+        const payload = document.getElementById('monthlyTrendData');
+        if (!canvas || !payload || typeof Chart === 'undefined') {
+            return;
+        }
+
+        const parsed = JSON.parse(payload.textContent || '{}');
+        const labels = parsed.labels || [];
+        const members = parsed.members || [];
+        const sessions = parsed.sessions || [];
+        const average = parsed.average || [];
+
+        const css = getComputedStyle(document.documentElement);
+        const border = css.getPropertyValue('--border').trim() || '#cccccc';
+        const text = css.getPropertyValue('--text').trim() || '#222222';
+
+        new Chart(canvas, {
+            type: 'line',
+            data: {
+                labels,
+                datasets: [
+                    {
+                        label: 'Nuevos miembros',
+                        data: members,
+                        borderColor: '#2c7a2c',
+                        backgroundColor: 'rgba(44,122,44,0.15)',
+                        tension: 0.35,
+                        fill: true,
+                        pointRadius: 3,
+                    },
+                    {
+                        label: 'Asistencias (descuentos)',
+                        data: sessions,
+                        borderColor: '#169230',
+                        backgroundColor: 'rgba(22,146,48,0.12)',
+                        tension: 0.35,
+                        fill: true,
+                        pointRadius: 3,
+                    },
+                    {
+                        label: 'Promedio móvil (3m)',
+                        data: average,
+                        borderColor: '#86b887',
+                        backgroundColor: 'transparent',
+                        tension: 0.2,
+                        pointRadius: 0,
+                        borderDash: [6, 6],
+                    },
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: {
+                        labels: { color: text }
+                    }
+                },
+                scales: {
+                    x: {
+                        ticks: { color: text },
+                        grid: { color: border }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        ticks: { color: text },
+                        grid: { color: border }
+                    }
+                }
+            }
+        });
+    })();
+
+    (() => {
+        const startBtn = document.getElementById('startQrScan');
+        const stopBtn = document.getElementById('stopQrScan');
+        const readerBox = document.getElementById('qrReader');
+        const status = document.getElementById('qrScanStatus');
+        const input = document.getElementById('sessionDocumentInput');
+        const form = document.getElementById('useSessionForm');
+
+        if (!startBtn || !readerBox || !input || !form || typeof Html5Qrcode === 'undefined') {
+            return;
+        }
+
+        let scanner = null;
+        let running = false;
+
+        const stopScanner = async () => {
+            if (!scanner || !running) {
+                return;
+            }
+            await scanner.stop();
+            await scanner.clear();
+            running = false;
+            readerBox.style.display = 'none';
+            stopBtn.style.display = 'none';
+            startBtn.disabled = false;
+        };
+
+        startBtn.addEventListener('click', async () => {
+            try {
+                scanner = new Html5Qrcode('qrReader');
+                readerBox.style.display = 'block';
+                stopBtn.style.display = 'inline-flex';
+                startBtn.disabled = true;
+
+                await scanner.start(
+                    { facingMode: 'environment' },
+                    { fps: 10, qrbox: 220 },
+                    async (decodedText) => {
+                        const value = (decodedText || '').trim();
+                        if (!value) {
+                            return;
+                        }
+                        input.value = value;
+                        status.textContent = `QR leído: ${value}. Registrando ingreso...`;
+                        await stopScanner();
+                        form.submit();
+                    }
+                );
+
+                running = true;
+                status.textContent = 'Escáner activo. Apunta la cámara al QR del miembro.';
+            } catch (error) {
+                status.textContent = 'No se pudo iniciar la cámara. Verifica permisos del navegador.';
+                startBtn.disabled = false;
+            }
+        });
+
+        if (stopBtn) {
+            stopBtn.addEventListener('click', async () => {
+                await stopScanner();
+                status.textContent = 'Escáner detenido.';
+            });
+        }
+    })();
+</script>
+{% endblock %}

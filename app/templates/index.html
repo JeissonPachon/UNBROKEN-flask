@@ -3,5 +3,41 @@
 {% block title %} {{ data.titulo }} {% endblock %}
 
 {% block body %}
-<h1>{{ data.bienvenida }}</h1>
+<section class="page-intro">
+    <p class="kicker">Gestión inteligente</p>
+</section>
+
+<section class="hero">
+	<h1>{{ data.bienvenida }}</h1>
+	<p>
+		Sistema de gestión para gimnasio con control de miembros, lesiones o enfermedades,
+		contacto de emergencia y administración de planes por sesiones mensuales.
+	</p>
+
+	{% if data.admin_logged %}
+		<div class="actions-row">
+			<a href="{{ url_for('dashboard') }}" class="primary-link">Ir al panel administrativo</a>
+			<a href="{{ url_for('members_new') }}" class="secondary-link">Registrar nuevo miembro</a>
+		</div>
+	{% else %}
+		<p class="muted-text">Inicia sesión como admin o encargado (arriba a la derecha).</p>
+	{% endif %}
+</section>
+
+<section class="card">
+	<h2>Planes activos</h2>
+	{% if data.planes %}
+		<div class="plan-cards">
+			{% for plan in data.planes %}
+			<div class="plan-card">
+				<h3>{{ plan.name }}</h3>
+				<p class="plan-sessions">{{ plan.sessions_per_month }} sesiones / mes</p>
+				<p class="plan-price">${{ "%.2f"|format(plan.price) }}</p>
+			</div>
+			{% endfor %}
+		</div>
+	{% else %}
+		<p>No hay planes activos por ahora.</p>
+	{% endif %}
+</section>
 {% endblock %}

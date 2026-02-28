@@ -3,6 +3,13 @@
 {% block title %} {{ data.titulo }} {% endblock %}
 
 {% block body %}
-<h1>{{ data.nombre }}</h1>
-<h2>Tu edad es: {{ data.edad }}</h2>
+<section class="page-intro">
+	<p class="kicker">Contacto</p>
+	<h1>{{ data.nombre }}</h1>
+</section>
+
+<section class="card">
+	<h2>Información básica</h2>
+	<p>Tu edad es: {{ data.edad }}</p>
+</section>
 {% endblock %}

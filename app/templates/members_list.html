@@ -1,0 +1,158 @@
+{% extends "./layout.html" %}
+
+{% block title %}Miembros{% endblock %}
+
+{% block body %}
+<section class="page-intro">
+    <p class="kicker">Gestión de miembros</p>
+    <h1>Miembros del gimnasio</h1>
+</section>
+
+<section class="card">
+    <div class="space-between">
+        <h2>Listado completo</h2>
+        <a href="{{ url_for('members_new') }}" class="primary-link">Nuevo miembro</a>
+    </div>
+
+    <div class="table-wrap">
+    <table>
+        <thead>
+            <tr>
+                <th>Nombre</th>
+                <th>Documento</th>
+                <th>Plan</th>
+                <th>Sesiones</th>
+                <th>Estado</th>
+                <th>Contacto emergencia</th>
+                <th>Salud</th>
+                <th>Acciones</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for m in members %}
+            <tr>
+                <td>{{ m.full_name }}</td>
+                <td>{{ m.document }}</td>
+                <td>{{ m.plan_name or '-' }}</td>
+                <td>{{ m.remaining_sessions if m.remaining_sessions is not none else '-' }}</td>
+                <td>{{ m.status or '-' }}</td>
+                <td>
+                    {{ m.emergency_contact_name or '-' }}
+                    {% if m.emergency_contact_phone %}<br>{{ m.emergency_contact_phone }}{% endif %}
+                </td>
+                <td>
+                    Lesiones: {{ m.injuries or 'N/A' }}<br>
+                    Condiciones: {{ m.conditions_text or 'N/A' }}
+                </td>
+                <td>
+                    <div class="actions-row">
+                        <button
+                            type="button"
+                            class="secondary-link show-qr-btn"
+                            data-document="{{ m.document }}"
+                            data-name="{{ m.full_name }}"
+                            data-phone="{{ m.phone or '' }}"
+                        >QR</button>
+                    <form method="post" action="{{ url_for('members_delete', member_id=m.id) }}" onsubmit="return confirm('¿Seguro que deseas eliminar este miembro? Esta acción no se puede deshacer.');">
+                        <button type="submit" class="danger-btn">Eliminar</button>
+                    </form>
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</section>
+
+<div id="qrModal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="qrModalTitle">
+    <div class="modal-card">
+        <button id="closeQrModal" type="button" class="modal-close" aria-label="Cerrar">×</button>
+        <h2 id="qrModalTitle">QR del miembro</h2>
+        <p id="qrMemberName" class="muted-text"></p>
+        <div id="memberQrCode" class="member-qr-code"></div>
+        <p id="qrMemberDoc" class="muted-text"></p>
+        <div class="panel-form" style="margin-top: 10px;">
+            <input id="qrWhatsappPhone" type="text" placeholder="Teléfono WhatsApp (ej: 573001112233)">
+            <button id="sendQrWhatsapp" type="button">Enviar por WhatsApp</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+<script>
+    (() => {
+        const modal = document.getElementById('qrModal');
+        const closeBtn = document.getElementById('closeQrModal');
+        const qrBox = document.getElementById('memberQrCode');
+        const memberName = document.getElementById('qrMemberName');
+        const memberDoc = document.getElementById('qrMemberDoc');
+        const phoneInput = document.getElementById('qrWhatsappPhone');
+        const sendWhatsappBtn = document.getElementById('sendQrWhatsapp');
+        const buttons = document.querySelectorAll('.show-qr-btn');
+        let selectedName = '';
+        let selectedDocument = '';
+
+        if (!modal || !qrBox || typeof QRCode === 'undefined') {
+            return;
+        }
+
+        const openModal = (name, documentValue, phoneValue) => {
+            selectedName = name || '';
+            selectedDocument = documentValue || '';
+            memberName.textContent = name || 'Miembro';
+            memberDoc.textContent = `Documento: ${documentValue}`;
+            if (phoneInput) {
+                phoneInput.value = phoneValue || '';
+            }
+            qrBox.innerHTML = '';
+            new QRCode(qrBox, {
+                text: documentValue,
+                width: 220,
+                height: 220,
+                correctLevel: QRCode.CorrectLevel.M,
+            });
+            modal.classList.remove('hidden');
+        };
+
+        const closeModal = () => modal.classList.add('hidden');
+
+        buttons.forEach((btn) => {
+            btn.addEventListener('click', () => {
+                openModal(btn.dataset.name || '', btn.dataset.document || '', btn.dataset.phone || '');
+            });
+        });
+
+        if (sendWhatsappBtn) {
+            sendWhatsappBtn.addEventListener('click', () => {
+                const rawPhone = (phoneInput?.value || '').trim();
+                const normalizedPhone = rawPhone.replace(/\D/g, '');
+                const qrLink = `${window.location.origin}/miembro-qr/${encodeURIComponent(selectedDocument)}`;
+                const message = [
+                    `Hola ${selectedName || ''}`.trim(),
+                    'Este es tu código QR para el ingreso al gimnasio.',
+                    `Documento: ${selectedDocument}`,
+                    `QR: ${qrLink}`,
+                    'Preséntalo en recepción al llegar.'
+                ].join('\n');
+
+                const base = normalizedPhone ? `https://wa.me/${normalizedPhone}` : 'https://wa.me/';
+                const url = `${base}?text=${encodeURIComponent(message)}`;
+                window.open(url, '_blank');
+            });
+        }
+
+        if (closeBtn) {
+            closeBtn.addEventListener('click', closeModal);
+        }
+
+        modal.addEventListener('click', (event) => {
+            if (event.target === modal) {
+                closeModal();
+            }
+        });
+    })();
+</script>
+{% endblock %}

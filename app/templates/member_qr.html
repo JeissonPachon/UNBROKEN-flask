@@ -1,0 +1,35 @@
+{% extends "./layout.html" %}
+
+{% block title %}QR de miembro{% endblock %}
+
+{% block body %}
+<section class="page-intro">
+    <p class="kicker">Código de ingreso</p>
+    <h1>{{ member.full_name }}</h1>
+</section>
+
+<section class="card">
+    <h2>Presenta este QR en recepción</h2>
+    <p class="muted-text">Documento: {{ member.document }}</p>
+    <div id="publicMemberQrCode" class="member-qr-code"></div>
+</section>
+{% endblock %}
+
+{% block extra_scripts %}
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+<script>
+    (() => {
+        const box = document.getElementById('publicMemberQrCode');
+        if (!box || typeof QRCode === 'undefined') {
+            return;
+        }
+
+        new QRCode(box, {
+            text: '{{ member.document }}',
+            width: 240,
+            height: 240,
+            correctLevel: QRCode.CorrectLevel.M,
+        });
+    })();
+</script>
+{% endblock %}

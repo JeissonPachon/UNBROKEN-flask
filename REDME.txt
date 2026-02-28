@@ -1,0 +1,17 @@
+UNBROKEN Flask - Configuración rápida
+
+Variables en .env:
+- MYSQL_HOST
+- MYSQL_PORT
+- MYSQL_USER
+- MYSQL_PASSWORD
+- MYSQL_DB
+- SECRET_KEY
+- ADMIN_USER
+- ADMIN_PASSWORD
+
+Login admin:
+1) Edita ADMIN_USER y ADMIN_PASSWORD en .env
+2) Reinicia la aplicación Flask
+3) Inicia sesión desde la esquina superior derecha del inicio
+

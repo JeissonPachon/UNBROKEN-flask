@@ -1,14 +1,69 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="es">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}{% endblock %}</title>
+    <title>{% block title %}UNBROKEN{% endblock %}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/layout.css') }}">
 </head>
 <body>
-    {% block body%}
-    {% endblock %}
+    <header class="topbar">
+        <a href="{{ url_for('index') }}" id="brandHome" class="brand brand-link">UNBROKEN BOX</a>
+    </header>
+
+    <button id="themeToggle" type="button" class="theme-toggle" aria-label="Cambiar tema" title="Cambiar tema">
+        <span class="theme-icon theme-sun" aria-hidden="true">☀</span>
+        <span class="theme-icon theme-moon" aria-hidden="true">☾</span>
+        <span class="theme-thumb" aria-hidden="true"></span>
+    </button>
+
+    {% if session.get('is_authenticated') %}
+    <section class="admin-strip">
+        <div class="admin-strip-content">
+            <span class="admin-badge">{{ 'Admin' if session.get('user_role') == 'admin' else 'Encargado' }}: {{ session.get('admin_user') }}</span>
+            <nav class="admin-nav">
+                <a class="link-btn" href="{{ url_for('dashboard') }}">Panel</a>
+                {% if session.get('user_role') == 'admin' %}
+                    <a class="link-btn" href="{{ url_for('members_list') }}">Miembros</a>
+                    <a class="link-btn" href="{{ url_for('settings_plans') }}">Configuración</a>
+                {% endif %}
+            </nav>
+            <form action="{{ url_for('logout') }}" method="post" class="inline-form admin-logout">
+                <button type="submit">Cerrar sesión</button>
+            </form>
+        </div>
+    </section>
+    {% else %}
+    <button id="openLoginModal" type="button" class="login-trigger">Sesion</button>
+
+    <div id="loginModal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="loginModalTitle">
+        <div class="modal-card">
+            <button id="closeLoginModal" type="button" class="modal-close" aria-label="Cerrar">×</button>
+            <h2 id="loginModalTitle">Inicio de sesión</h2>
+            <form action="{{ url_for('login') }}" method="post" class="modal-form">
+                <input type="text" name="username" placeholder="Usuario (admin o encargado)" required>
+                <input type="password" name="password" placeholder="Contraseña" required>
+                <button type="submit">Iniciar sesión</button>
+            </form>
+        </div>
+    </div>
+    {% endif %}
+
+    <main class="container">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <div class="flash-stack">
+                    {% for category, message in messages %}
+                        <div class="flash flash-{{ category }}">{{ message }}</div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+
+        {% block body %}{% endblock %}
+    </main>
+
     <script src="{{ url_for('static', filename='js/layout.js') }}"></script>
+    {% block extra_scripts %}{% endblock %}
 </body>
 </html>
