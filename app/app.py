@@ -283,23 +283,28 @@ def login():
     username = request.form.get('username', '').strip()
     password = request.form.get('password', '').strip()
 
-    admin = query_one(
-        'SELECT id, username, password_hash, role FROM gym_admins WHERE username = %s AND is_active = 1',
-        (username,),
-    )
+    if username == ADMIN_USER and password == ADMIN_PASSWORD:
+        session['is_authenticated'] = True
+        session['is_admin'] = True
+        session['user_role'] = 'admin'
+        session['username'] = username
+        flash('Sesión iniciada.', 'success')
+        return redirect(url_for('dashboard'))
+
+    try:
+        admin = query_one(
+            'SELECT id, username, password_hash, role FROM gym_admins WHERE username = %s AND is_active = 1',
+            (username,),
+        )
+    except Exception:
+        flash('No se pudo validar el usuario en este momento. Verifica la conexión de base de datos.', 'danger')
+        return redirect(url_for('index'))
+
     is_valid = False
     user_role = 'admin'
     if admin and check_password_hash(admin['password_hash'], password):
         is_valid = True
         user_role = admin.get('role', 'admin')
-    elif username == ADMIN_USER and password == ADMIN_PASSWORD:
-        is_valid = True
-        if not admin:
-            execute(
-                'INSERT INTO gym_admins (username, password_hash, role, is_active) VALUES (%s, %s, %s, 1)',
-                (username, generate_password_hash(password), 'admin'),
-            )
-        user_role = 'admin'
 
     if is_valid:
         session['is_authenticated'] = True
