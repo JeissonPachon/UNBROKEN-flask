@@ -287,7 +287,7 @@ def login():
         session['is_authenticated'] = True
         session['is_admin'] = True
         session['user_role'] = 'admin'
-        session['username'] = username
+        session['admin_user'] = username
         flash('Sesión iniciada.', 'success')
         return redirect(url_for('dashboard'))
 
@@ -330,60 +330,13 @@ def logout():
 def dashboard():
     user_role = current_role()
     can_manage = user_role == 'admin'
-    members_count = query_one('SELECT COUNT(*) AS total FROM gym_members')
-    active_count = query_one(
-        """
-        SELECT COUNT(*) AS total
-        FROM gym_subscriptions
-        WHERE status = 'active' AND remaining_sessions > 0 AND end_date >= CURDATE()
-        """
-    )
-    plans = query_all('SELECT id, name FROM gym_plans WHERE is_active = 1 ORDER BY name')
-    recent_members = query_all(
-        """
-        SELECT m.id, m.full_name, m.document, s.remaining_sessions, s.status, p.name AS plan_name
-        FROM gym_members m
-        LEFT JOIN gym_subscriptions s ON s.id = (
-            SELECT gs.id
-            FROM gym_subscriptions gs
-            WHERE gs.member_id = m.id
-            ORDER BY gs.id DESC
-            LIMIT 1
-        )
-        LEFT JOIN gym_plans p ON p.id = s.plan_id
-        ORDER BY m.id DESC
-        LIMIT 10
-        """
-    )
-    recent_session_logs = query_all(
-        """
-        SELECT id, member_document, member_name, action,
-               remaining_before, remaining_after,
-               performed_by, performed_role, created_at
-        FROM gym_session_logs
-        ORDER BY id DESC
-        LIMIT 15
-        """
-    )
-    monthly_members_raw = query_all(
-        """
-        SELECT DATE_FORMAT(created_at, '%%Y-%%m') AS ym, COUNT(*) AS total
-        FROM gym_members
-        WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
-        GROUP BY DATE_FORMAT(created_at, '%%Y-%%m')
-        ORDER BY ym ASC
-        """
-    )
-    monthly_sessions_raw = query_all(
-        """
-        SELECT DATE_FORMAT(created_at, '%%Y-%%m') AS ym, COUNT(*) AS total
-        FROM gym_session_logs
-        WHERE action = 'session_discount'
-          AND created_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
-        GROUP BY DATE_FORMAT(created_at, '%%Y-%%m')
-        ORDER BY ym ASC
-        """
-    )
+    members_count = 0
+    active_count = 0
+    plans = []
+    recent_members = []
+    recent_session_logs = []
+    monthly_members_raw = []
+    monthly_sessions_raw = []
 
     months = []
     month_cursor = date.today().replace(day=1)
@@ -395,43 +348,30 @@ def dashboard():
             month_cursor = month_cursor.replace(month=month_cursor.month - 1)
     months = months[-12:]
 
-    members_map = {row['ym']: int(row['total']) for row in monthly_members_raw}
-    sessions_map = {row['ym']: int(row['total']) for row in monthly_sessions_raw}
-
     month_labels = [f"{m.month:02d}/{m.year}" for m in months]
     month_keys = [f"{m.year}-{m.month:02d}" for m in months]
-    month_members = [members_map.get(key, 0) for key in month_keys]
-    month_sessions = [sessions_map.get(key, 0) for key in month_keys]
-
-    trailing_avg = []
-    for idx in range(len(month_sessions)):
-        start = max(0, idx - 2)
-        window = month_sessions[start:idx + 1]
-        trailing_avg.append(round(sum(window) / len(window), 2) if window else 0)
-
-    current_month_sessions = month_sessions[-1] if month_sessions else 0
-    previous_three = month_sessions[-4:-1] if len(month_sessions) >= 4 else month_sessions[:-1]
-    previous_three_avg = round(sum(previous_three) / len(previous_three), 2) if previous_three else 0
+    month_members = [0 for _ in month_keys]
+    month_sessions = [0 for _ in month_keys]
+    trailing_avg = [0 for _ in month_keys]
     drop_alert = None
-    if previous_three_avg > 0:
-        drop_pct = round(((previous_three_avg - current_month_sessions) / previous_three_avg) * 100, 1)
-        if drop_pct >= 20:
-            drop_alert = {
-                'drop_pct': drop_pct,
-                'current': current_month_sessions,
-                'avg': previous_three_avg,
-            }
-    lookup_document = request.args.get('document', '').strip()
-    member_lookup = None
-    if lookup_document:
-        member_lookup = query_one(
+
+    try:
+        members_count_row = query_one('SELECT COUNT(*) AS total FROM gym_members')
+        members_count = members_count_row['total'] if members_count_row else 0
+
+        active_count_row = query_one(
             """
-            SELECT m.full_name,
-                   m.document,
-                   s.remaining_sessions,
-                   s.status,
-                   s.end_date,
-                   p.name AS plan_name
+            SELECT COUNT(*) AS total
+            FROM gym_subscriptions
+            WHERE status = 'active' AND remaining_sessions > 0 AND end_date >= CURDATE()
+            """
+        )
+        active_count = active_count_row['total'] if active_count_row else 0
+
+        plans = query_all('SELECT id, name FROM gym_plans WHERE is_active = 1 ORDER BY name')
+        recent_members = query_all(
+            """
+            SELECT m.id, m.full_name, m.document, s.remaining_sessions, s.status, p.name AS plan_name
             FROM gym_members m
             LEFT JOIN gym_subscriptions s ON s.id = (
                 SELECT gs.id
@@ -441,15 +381,98 @@ def dashboard():
                 LIMIT 1
             )
             LEFT JOIN gym_plans p ON p.id = s.plan_id
-            WHERE m.document = %s
-            """,
-            (lookup_document,),
+            ORDER BY m.id DESC
+            LIMIT 10
+            """
         )
+        recent_session_logs = query_all(
+            """
+            SELECT id, member_document, member_name, action,
+                   remaining_before, remaining_after,
+                   performed_by, performed_role, created_at
+            FROM gym_session_logs
+            ORDER BY id DESC
+            LIMIT 15
+            """
+        )
+        monthly_members_raw = query_all(
+            """
+            SELECT DATE_FORMAT(created_at, '%%Y-%%m') AS ym, COUNT(*) AS total
+            FROM gym_members
+            WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+            GROUP BY DATE_FORMAT(created_at, '%%Y-%%m')
+            ORDER BY ym ASC
+            """
+        )
+        monthly_sessions_raw = query_all(
+            """
+            SELECT DATE_FORMAT(created_at, '%%Y-%%m') AS ym, COUNT(*) AS total
+            FROM gym_session_logs
+            WHERE action = 'session_discount'
+              AND created_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+            GROUP BY DATE_FORMAT(created_at, '%%Y-%%m')
+            ORDER BY ym ASC
+            """
+        )
+
+        members_map = {row['ym']: int(row['total']) for row in monthly_members_raw}
+        sessions_map = {row['ym']: int(row['total']) for row in monthly_sessions_raw}
+
+        month_members = [members_map.get(key, 0) for key in month_keys]
+        month_sessions = [sessions_map.get(key, 0) for key in month_keys]
+
+        trailing_avg = []
+        for idx in range(len(month_sessions)):
+            start = max(0, idx - 2)
+            window = month_sessions[start:idx + 1]
+            trailing_avg.append(round(sum(window) / len(window), 2) if window else 0)
+
+        current_month_sessions = month_sessions[-1] if month_sessions else 0
+        previous_three = month_sessions[-4:-1] if len(month_sessions) >= 4 else month_sessions[:-1]
+        previous_three_avg = round(sum(previous_three) / len(previous_three), 2) if previous_three else 0
+        if previous_three_avg > 0:
+            drop_pct = round(((previous_three_avg - current_month_sessions) / previous_three_avg) * 100, 1)
+            if drop_pct >= 20:
+                drop_alert = {
+                    'drop_pct': drop_pct,
+                    'current': current_month_sessions,
+                    'avg': previous_three_avg,
+                }
+    except Exception:
+        flash('No hay conexión con la base de datos. El panel se muestra en modo limitado.', 'warning')
+
+    lookup_document = request.args.get('document', '').strip()
+    member_lookup = None
+    if lookup_document:
+        try:
+            member_lookup = query_one(
+                """
+                SELECT m.full_name,
+                       m.document,
+                       s.remaining_sessions,
+                       s.status,
+                       s.end_date,
+                       p.name AS plan_name
+                FROM gym_members m
+                LEFT JOIN gym_subscriptions s ON s.id = (
+                    SELECT gs.id
+                    FROM gym_subscriptions gs
+                    WHERE gs.member_id = m.id
+                    ORDER BY gs.id DESC
+                    LIMIT 1
+                )
+                LEFT JOIN gym_plans p ON p.id = s.plan_id
+                WHERE m.document = %s
+                """,
+                (lookup_document,),
+            )
+        except Exception:
+            member_lookup = None
 
     return render_template(
         'dashboard.html',
-        members_count=members_count['total'],
-        active_count=active_count['total'],
+        members_count=members_count,
+        active_count=active_count,
         plans=plans,
         recent_members=recent_members,
         recent_session_logs=recent_session_logs,
