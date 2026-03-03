@@ -414,7 +414,10 @@ def admin_required(view):
 @app.before_request
 def before_request():
     if app.config.get('AUTO_SCHEMA_INIT'):
-        ensure_schema()
+        try:
+            ensure_schema()
+        except Exception:
+            app.config['AUTO_SCHEMA_INIT'] = False
 
 @app.route('/')
 def index ():
