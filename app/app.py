@@ -1,8 +1,16 @@
 import os
 from datetime import date, timedelta
 from functools import wraps
+from urllib.parse import parse_qs, unquote, urlparse
 
 import pymysql
+try:
+    import psycopg
+    from psycopg.rows import dict_row
+except Exception:
+    psycopg = None
+    dict_row = None
+
 from flask import Flask, flash, redirect, render_template, request, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -34,6 +42,10 @@ app.config['MYSQL_USER'] = os.getenv('MYSQL_USER', 'root')
 app.config['MYSQL_PASSWORD'] = os.getenv('MYSQL_PASSWORD', 'admin')
 app.config['MYSQL_DB'] = os.getenv('MYSQL_DB', 'unbroken')
 app.config['MYSQL_PORT'] = int(os.getenv('MYSQL_PORT', '3306'))
+app.config['MYSQL_URL'] = os.getenv('MYSQL_URL', '').strip()
+app.config['MYSQL_SSL_DISABLED'] = os.getenv('MYSQL_SSL_DISABLED', '0') == '1'
+app.config['DATABASE_URL'] = os.getenv('DATABASE_URL', os.getenv('SUPABASE_DB_URL', '')).strip()
+app.config['DB_ENGINE'] = 'postgres' if app.config['DATABASE_URL'].lower().startswith(('postgres://', 'postgresql://')) else 'mysql'
 app.config['AUTO_SCHEMA_INIT'] = os.getenv('AUTO_SCHEMA_INIT', '0' if os.getenv('VERCEL') else '1') == '1'
 
 ADMIN_USER = os.getenv('ADMIN_USER', 'admin')
@@ -54,7 +66,58 @@ def format_cop(value):
 app.jinja_env.filters['cop'] = format_cop
 
 
+def is_postgres():
+    return app.config.get('DB_ENGINE') == 'postgres'
+
+
+def sql_today():
+    return 'CURRENT_DATE' if is_postgres() else 'CURDATE()'
+
+
+def sql_true():
+    return 'TRUE' if is_postgres() else '1'
+
+
+def active_value():
+    return True if is_postgres() else 1
+
+
+def scalar_from_row(row):
+    if row is None:
+        return None
+    if isinstance(row, dict):
+        return next(iter(row.values()))
+    return row[0]
+
+
 def get_db_connection():
+    if is_postgres():
+        if not app.config['DATABASE_URL']:
+            raise RuntimeError('DATABASE_URL no configurada para PostgreSQL/Supabase.')
+        if psycopg is None:
+            raise RuntimeError('Falta instalar psycopg para conectar con Supabase.')
+        return psycopg.connect(app.config['DATABASE_URL'], row_factory=dict_row, connect_timeout=10)
+
+    if app.config['MYSQL_URL']:
+        parsed = urlparse(app.config['MYSQL_URL'])
+        query = parse_qs(parsed.query)
+        ssl_disabled_by_url = (query.get('ssl', [''])[0].lower() == 'false')
+        ssl_disabled = app.config['MYSQL_SSL_DISABLED'] or ssl_disabled_by_url
+
+        connect_kwargs = {
+            'host': parsed.hostname or app.config['MYSQL_HOST'],
+            'user': unquote(parsed.username) if parsed.username else app.config['MYSQL_USER'],
+            'password': unquote(parsed.password) if parsed.password else app.config['MYSQL_PASSWORD'],
+            'database': parsed.path.lstrip('/') or app.config['MYSQL_DB'],
+            'port': int(parsed.port or app.config['MYSQL_PORT']),
+            'charset': 'utf8mb4',
+            'autocommit': False,
+            'connect_timeout': 10,
+        }
+        if not ssl_disabled:
+            connect_kwargs['ssl'] = {}
+        return pymysql.connect(**connect_kwargs)
+
     return pymysql.connect(
         host=app.config['MYSQL_HOST'],
         user=app.config['MYSQL_USER'],
@@ -63,12 +126,13 @@ def get_db_connection():
         port=app.config['MYSQL_PORT'],
         charset='utf8mb4',
         autocommit=False,
+        connect_timeout=10,
     )
 
 
 def query_all(sql, params=()):
     conn = get_db_connection()
-    cursor = conn.cursor(pymysql.cursors.DictCursor)
+    cursor = conn.cursor() if is_postgres() else conn.cursor(pymysql.cursors.DictCursor)
     cursor.execute(sql, params)
     rows = cursor.fetchall()
     cursor.close()
@@ -78,7 +142,7 @@ def query_all(sql, params=()):
 
 def query_one(sql, params=()):
     conn = get_db_connection()
-    cursor = conn.cursor(pymysql.cursors.DictCursor)
+    cursor = conn.cursor() if is_postgres() else conn.cursor(pymysql.cursors.DictCursor)
     cursor.execute(sql, params)
     row = cursor.fetchone()
     cursor.close()
@@ -89,10 +153,23 @@ def query_one(sql, params=()):
 def execute(sql, params=()):
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute(sql, params)
+    normalized_sql = sql.strip().lower()
+    needs_returning_id = is_postgres() and normalized_sql.startswith('insert into') and 'returning' not in normalized_sql
+    sql_to_run = f"{sql.rstrip().rstrip(';')} RETURNING id" if needs_returning_id else sql
+    cursor.execute(sql_to_run, params)
+
+    last_id = None
+    if needs_returning_id:
+        inserted = cursor.fetchone()
+        if isinstance(inserted, dict):
+            last_id = inserted.get('id')
+        elif inserted:
+            last_id = inserted[0]
+
     conn.commit()
-    last_id = cursor.lastrowid
-    row_count = cursor.rowcount
+    if last_id is None:
+        last_id = getattr(cursor, 'lastrowid', None)
+    row_count = cursor.rowcount if cursor.rowcount is not None else 0
     cursor.close()
     conn.close()
     return last_id, row_count
@@ -108,122 +185,201 @@ def ensure_schema():
 
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS gym_plans (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            name VARCHAR(120) NOT NULL,
-            sessions_per_month INT NOT NULL,
-            price DECIMAL(10, 2) NOT NULL DEFAULT 0,
-            is_active TINYINT(1) NOT NULL DEFAULT 1,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-        """
-    )
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS gym_members (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            full_name VARCHAR(180) NOT NULL,
-            document VARCHAR(50) NOT NULL UNIQUE,
-            phone VARCHAR(50),
-            email VARCHAR(120),
-            injuries TEXT,
-            conditions_text TEXT,
-            emergency_contact_name VARCHAR(180),
-            emergency_contact_phone VARCHAR(50),
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-        """
-    )
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS gym_subscriptions (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            member_id INT NOT NULL,
-            plan_id INT NOT NULL,
-            start_date DATE NOT NULL,
-            end_date DATE NOT NULL,
-            remaining_sessions INT NOT NULL,
-            status VARCHAR(20) NOT NULL DEFAULT 'active',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            CONSTRAINT fk_sub_member FOREIGN KEY (member_id) REFERENCES gym_members(id),
-            CONSTRAINT fk_sub_plan FOREIGN KEY (plan_id) REFERENCES gym_plans(id)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-        """
-    )
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS gym_admins (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            username VARCHAR(120) NOT NULL UNIQUE,
-            password_hash VARCHAR(255) NOT NULL,
-            is_active TINYINT(1) NOT NULL DEFAULT 1,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-        """
-    )
-    cursor.execute(
-        """
-        CREATE TABLE IF NOT EXISTS gym_session_logs (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            member_id INT NULL,
-            member_document VARCHAR(50),
-            member_name VARCHAR(180),
-            subscription_id INT NULL,
-            action VARCHAR(40) NOT NULL,
-            remaining_before INT NULL,
-            remaining_after INT NULL,
-            performed_by VARCHAR(120) NOT NULL,
-            performed_role VARCHAR(20) NOT NULL,
-            notes VARCHAR(255),
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-        """
-    )
-    cursor.execute(
-        """
-        SELECT COUNT(*)
-        FROM information_schema.COLUMNS
-        WHERE TABLE_SCHEMA = %s
-          AND TABLE_NAME = 'gym_admins'
-          AND COLUMN_NAME = 'role'
-        """,
-        (app.config['MYSQL_DB'],),
-    )
-    role_column_exists = cursor.fetchone()[0] > 0
-    if not role_column_exists:
-        cursor.execute("ALTER TABLE gym_admins ADD COLUMN role VARCHAR(20) NOT NULL DEFAULT 'admin' AFTER password_hash")
+    if is_postgres():
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS gym_plans (
+                id SERIAL PRIMARY KEY,
+                name VARCHAR(120) NOT NULL,
+                sessions_per_month INT NOT NULL,
+                price NUMERIC(10, 2) NOT NULL DEFAULT 0,
+                is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS gym_members (
+                id SERIAL PRIMARY KEY,
+                full_name VARCHAR(180) NOT NULL,
+                document VARCHAR(50) NOT NULL UNIQUE,
+                phone VARCHAR(50),
+                email VARCHAR(120),
+                injuries TEXT,
+                conditions_text TEXT,
+                emergency_contact_name VARCHAR(180),
+                emergency_contact_phone VARCHAR(50),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS gym_subscriptions (
+                id SERIAL PRIMARY KEY,
+                member_id INT NOT NULL,
+                plan_id INT NOT NULL,
+                start_date DATE NOT NULL,
+                end_date DATE NOT NULL,
+                remaining_sessions INT NOT NULL,
+                status VARCHAR(20) NOT NULL DEFAULT 'active',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                CONSTRAINT fk_sub_member FOREIGN KEY (member_id) REFERENCES gym_members(id),
+                CONSTRAINT fk_sub_plan FOREIGN KEY (plan_id) REFERENCES gym_plans(id)
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS gym_admins (
+                id SERIAL PRIMARY KEY,
+                username VARCHAR(120) NOT NULL UNIQUE,
+                password_hash VARCHAR(255) NOT NULL,
+                is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS gym_session_logs (
+                id SERIAL PRIMARY KEY,
+                member_id INT NULL,
+                member_document VARCHAR(50),
+                member_name VARCHAR(180),
+                subscription_id INT NULL,
+                action VARCHAR(40) NOT NULL,
+                remaining_before INT NULL,
+                remaining_after INT NULL,
+                performed_by VARCHAR(120) NOT NULL,
+                performed_role VARCHAR(20) NOT NULL,
+                notes VARCHAR(255),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        cursor.execute("ALTER TABLE gym_admins ADD COLUMN IF NOT EXISTS role VARCHAR(20) NOT NULL DEFAULT 'admin'")
+    else:
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS gym_plans (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                name VARCHAR(120) NOT NULL,
+                sessions_per_month INT NOT NULL,
+                price DECIMAL(10, 2) NOT NULL DEFAULT 0,
+                is_active TINYINT(1) NOT NULL DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS gym_members (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                full_name VARCHAR(180) NOT NULL,
+                document VARCHAR(50) NOT NULL UNIQUE,
+                phone VARCHAR(50),
+                email VARCHAR(120),
+                injuries TEXT,
+                conditions_text TEXT,
+                emergency_contact_name VARCHAR(180),
+                emergency_contact_phone VARCHAR(50),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS gym_subscriptions (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                member_id INT NOT NULL,
+                plan_id INT NOT NULL,
+                start_date DATE NOT NULL,
+                end_date DATE NOT NULL,
+                remaining_sessions INT NOT NULL,
+                status VARCHAR(20) NOT NULL DEFAULT 'active',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                CONSTRAINT fk_sub_member FOREIGN KEY (member_id) REFERENCES gym_members(id),
+                CONSTRAINT fk_sub_plan FOREIGN KEY (plan_id) REFERENCES gym_plans(id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS gym_admins (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                username VARCHAR(120) NOT NULL UNIQUE,
+                password_hash VARCHAR(255) NOT NULL,
+                is_active TINYINT(1) NOT NULL DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS gym_session_logs (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                member_id INT NULL,
+                member_document VARCHAR(50),
+                member_name VARCHAR(180),
+                subscription_id INT NULL,
+                action VARCHAR(40) NOT NULL,
+                remaining_before INT NULL,
+                remaining_after INT NULL,
+                performed_by VARCHAR(120) NOT NULL,
+                performed_role VARCHAR(20) NOT NULL,
+                notes VARCHAR(255),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """
+        )
+        cursor.execute(
+            """
+            SELECT COUNT(*)
+            FROM information_schema.COLUMNS
+            WHERE TABLE_SCHEMA = %s
+              AND TABLE_NAME = 'gym_admins'
+              AND COLUMN_NAME = 'role'
+            """,
+            (app.config['MYSQL_DB'],),
+        )
+        role_column_exists = scalar_from_row(cursor.fetchone()) > 0
+        if not role_column_exists:
+            cursor.execute("ALTER TABLE gym_admins ADD COLUMN role VARCHAR(20) NOT NULL DEFAULT 'admin' AFTER password_hash")
+
     cursor.execute("UPDATE gym_admins SET role = 'admin' WHERE role IS NULL OR role = ''")
     cursor.execute('SELECT COUNT(*) FROM gym_plans')
-    plans_count = cursor.fetchone()[0]
+    plans_count = scalar_from_row(cursor.fetchone())
     if plans_count == 0:
         cursor.execute(
             """
-            INSERT INTO gym_plans (name, sessions_per_month, price, is_active)
+            INSERT INTO gym_plans (name, sessions_per_month, price)
             VALUES
-                ('Plan Básico', 8, 80.00, 1),
-                ('Plan Intermedio', 12, 120.00, 1),
-                ('Plan Full', 20, 180.00, 1)
+                ('Plan Básico', 8, 80.00),
+                ('Plan Intermedio', 12, 120.00),
+                ('Plan Full', 20, 180.00)
             """
         )
 
     cursor.execute('SELECT COUNT(*) FROM gym_admins')
-    admins_count = cursor.fetchone()[0]
+    admins_count = scalar_from_row(cursor.fetchone())
     if admins_count == 0:
         cursor.execute(
-            'INSERT INTO gym_admins (username, password_hash, role, is_active) VALUES (%s, %s, %s, 1)',
-            (ADMIN_USER, generate_password_hash(ADMIN_PASSWORD), 'admin'),
+            'INSERT INTO gym_admins (username, password_hash, role, is_active) VALUES (%s, %s, %s, %s)',
+            (ADMIN_USER, generate_password_hash(ADMIN_PASSWORD), 'admin', active_value()),
         )
     else:
         cursor.execute('SELECT id FROM gym_admins WHERE username = %s', (ADMIN_USER,))
         env_admin = cursor.fetchone()
         if not env_admin:
             cursor.execute(
-                'INSERT INTO gym_admins (username, password_hash, role, is_active) VALUES (%s, %s, %s, 1)',
-                (ADMIN_USER, generate_password_hash(ADMIN_PASSWORD), 'admin'),
+                'INSERT INTO gym_admins (username, password_hash, role, is_active) VALUES (%s, %s, %s, %s)',
+                (ADMIN_USER, generate_password_hash(ADMIN_PASSWORD), 'admin', active_value()),
             )
 
     conn.commit()
@@ -258,14 +414,17 @@ def admin_required(view):
 @app.before_request
 def before_request():
     if app.config.get('AUTO_SCHEMA_INIT'):
-        ensure_schema()
+        try:
+            ensure_schema()
+        except Exception:
+            app.config['AUTO_SCHEMA_INIT'] = False
 
 @app.route('/')
 def index ():
     active_plans = []
     try:
         active_plans = query_all(
-            'SELECT id, name, sessions_per_month, price FROM gym_plans WHERE is_active = 1 ORDER BY id ASC'
+            f'SELECT id, name, sessions_per_month, price FROM gym_plans WHERE is_active = {sql_true()} ORDER BY id ASC'
         )
     except Exception:
         active_plans = []
@@ -293,7 +452,7 @@ def login():
 
     try:
         admin = query_one(
-            'SELECT id, username, password_hash, role FROM gym_admins WHERE username = %s AND is_active = 1',
+            f'SELECT id, username, password_hash, role FROM gym_admins WHERE username = %s AND is_active = {sql_true()}',
             (username,),
         )
     except Exception:
@@ -360,15 +519,15 @@ def dashboard():
         members_count = members_count_row['total'] if members_count_row else 0
 
         active_count_row = query_one(
-            """
+            f"""
             SELECT COUNT(*) AS total
             FROM gym_subscriptions
-            WHERE status = 'active' AND remaining_sessions > 0 AND end_date >= CURDATE()
+            WHERE status = 'active' AND remaining_sessions > 0 AND end_date >= {sql_today()}
             """
         )
         active_count = active_count_row['total'] if active_count_row else 0
 
-        plans = query_all('SELECT id, name FROM gym_plans WHERE is_active = 1 ORDER BY name')
+        plans = query_all(f'SELECT id, name FROM gym_plans WHERE is_active = {sql_true()} ORDER BY name')
         recent_members = query_all(
             """
             SELECT m.id, m.full_name, m.document, s.remaining_sessions, s.status, p.name AS plan_name
@@ -395,25 +554,46 @@ def dashboard():
             LIMIT 15
             """
         )
-        monthly_members_raw = query_all(
-            """
-            SELECT DATE_FORMAT(created_at, '%%Y-%%m') AS ym, COUNT(*) AS total
-            FROM gym_members
-            WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
-            GROUP BY DATE_FORMAT(created_at, '%%Y-%%m')
-            ORDER BY ym ASC
-            """
-        )
-        monthly_sessions_raw = query_all(
-            """
-            SELECT DATE_FORMAT(created_at, '%%Y-%%m') AS ym, COUNT(*) AS total
-            FROM gym_session_logs
-            WHERE action = 'session_discount'
-              AND created_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
-            GROUP BY DATE_FORMAT(created_at, '%%Y-%%m')
-            ORDER BY ym ASC
-            """
-        )
+        if is_postgres():
+            monthly_members_raw = query_all(
+                """
+                SELECT to_char(created_at, 'YYYY-MM') AS ym, COUNT(*) AS total
+                FROM gym_members
+                WHERE created_at >= (CURRENT_DATE - INTERVAL '12 months')
+                GROUP BY to_char(created_at, 'YYYY-MM')
+                ORDER BY ym ASC
+                """
+            )
+            monthly_sessions_raw = query_all(
+                """
+                SELECT to_char(created_at, 'YYYY-MM') AS ym, COUNT(*) AS total
+                FROM gym_session_logs
+                WHERE action = 'session_discount'
+                  AND created_at >= (CURRENT_DATE - INTERVAL '12 months')
+                GROUP BY to_char(created_at, 'YYYY-MM')
+                ORDER BY ym ASC
+                """
+            )
+        else:
+            monthly_members_raw = query_all(
+                """
+                SELECT DATE_FORMAT(created_at, '%%Y-%%m') AS ym, COUNT(*) AS total
+                FROM gym_members
+                WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+                GROUP BY DATE_FORMAT(created_at, '%%Y-%%m')
+                ORDER BY ym ASC
+                """
+            )
+            monthly_sessions_raw = query_all(
+                """
+                SELECT DATE_FORMAT(created_at, '%%Y-%%m') AS ym, COUNT(*) AS total
+                FROM gym_session_logs
+                WHERE action = 'session_discount'
+                  AND created_at >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+                GROUP BY DATE_FORMAT(created_at, '%%Y-%%m')
+                ORDER BY ym ASC
+                """
+            )
 
         members_map = {row['ym']: int(row['total']) for row in monthly_members_raw}
         sessions_map = {row['ym']: int(row['total']) for row in monthly_sessions_raw}
@@ -521,7 +701,7 @@ def members_list():
 def members_new():
     plans = []
     try:
-        plans = query_all('SELECT id, name, sessions_per_month FROM gym_plans WHERE is_active = 1 ORDER BY name')
+        plans = query_all(f'SELECT id, name, sessions_per_month FROM gym_plans WHERE is_active = {sql_true()} ORDER BY name')
     except Exception:
         flash('No hay conexión con la base de datos. No es posible cargar planes en este momento.', 'warning')
 
@@ -544,7 +724,7 @@ def members_new():
             flash('Nombre, documento y plan son obligatorios.', 'danger')
             return render_template('members_form.html', plans=plans)
 
-        plan = query_one('SELECT id, sessions_per_month FROM gym_plans WHERE id = %s AND is_active = 1', (plan_id,))
+        plan = query_one(f'SELECT id, sessions_per_month FROM gym_plans WHERE id = %s AND is_active = {sql_true()}', (plan_id,))
         if not plan:
             flash('Plan inválido.', 'danger')
             return render_template('members_form.html', plans=plans)
@@ -624,12 +804,12 @@ def use_session():
         return redirect(url_for('dashboard'))
 
     subscription = query_one(
-        """
+                f"""
         SELECT id, remaining_sessions
         FROM gym_subscriptions
         WHERE member_id = %s
           AND status = 'active'
-          AND end_date >= CURDATE()
+                    AND end_date >= {sql_today()}
         ORDER BY id DESC
         LIMIT 1
         """,
@@ -691,7 +871,7 @@ def renew_subscription():
         )
         plan_id = latest['plan_id'] if latest else None
 
-    plan = query_one('SELECT id, sessions_per_month FROM gym_plans WHERE id = %s AND is_active = 1', (plan_id,))
+    plan = query_one(f'SELECT id, sessions_per_month FROM gym_plans WHERE id = %s AND is_active = {sql_true()}', (plan_id,))
     if not plan:
         flash('Plan inválido para renovación.', 'danger')
         return redirect(url_for('dashboard'))
@@ -766,8 +946,8 @@ def settings_plans_create():
         return redirect(url_for('settings_plans'))
 
     execute(
-        'INSERT INTO gym_plans (name, sessions_per_month, price, is_active) VALUES (%s, %s, %s, 1)',
-        (name, int(sessions_per_month), float(price)),
+        'INSERT INTO gym_plans (name, sessions_per_month, price, is_active) VALUES (%s, %s, %s, %s)',
+        (name, int(sessions_per_month), float(price), active_value()),
     )
     flash('Plan creado correctamente.', 'success')
     return redirect(url_for('settings_plans'))
@@ -800,7 +980,7 @@ def settings_plans_toggle(plan_id):
         flash('Plan no encontrado.', 'danger')
         return redirect(url_for('settings_plans'))
 
-    new_state = 0 if plan['is_active'] else 1
+    new_state = (not bool(plan['is_active'])) if is_postgres() else (0 if plan['is_active'] else 1)
     execute('UPDATE gym_plans SET is_active = %s WHERE id = %s', (new_state, plan_id))
     flash('Estado del plan actualizado.', 'success')
     return redirect(url_for('settings_plans'))
@@ -839,7 +1019,7 @@ def settings_admin_password():
         return redirect(url_for('settings_plans'))
 
     username = session.get('admin_user')
-    admin = query_one('SELECT id, password_hash FROM gym_admins WHERE username = %s AND is_active = 1', (username,))
+    admin = query_one(f'SELECT id, password_hash FROM gym_admins WHERE username = %s AND is_active = {sql_true()}', (username,))
     if not admin:
         flash('Usuario admin no encontrado.', 'danger')
         return redirect(url_for('settings_plans'))
@@ -876,8 +1056,8 @@ def settings_staff_create():
         return redirect(url_for('settings_plans'))
 
     execute(
-        'INSERT INTO gym_admins (username, password_hash, role, is_active) VALUES (%s, %s, %s, 1)',
-        (username, generate_password_hash(password), 'staff'),
+        'INSERT INTO gym_admins (username, password_hash, role, is_active) VALUES (%s, %s, %s, %s)',
+        (username, generate_password_hash(password), 'staff', active_value()),
     )
     flash('Encargado creado correctamente.', 'success')
     return redirect(url_for('settings_plans'))
@@ -891,7 +1071,7 @@ def settings_staff_toggle(user_id):
         flash('Encargado no encontrado.', 'danger')
         return redirect(url_for('settings_plans'))
 
-    new_state = 0 if user['is_active'] else 1
+    new_state = (not bool(user['is_active'])) if is_postgres() else (0 if user['is_active'] else 1)
     execute('UPDATE gym_admins SET is_active = %s WHERE id = %s', (new_state, user_id))
     flash('Estado del encargado actualizado.', 'success')
     return redirect(url_for('settings_plans'))
@@ -933,23 +1113,36 @@ def db_test():
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute('SELECT DATABASE() AS db_name')
+        if is_postgres():
+            cursor.execute('SELECT current_database() AS db_name')
+        else:
+            cursor.execute('SELECT DATABASE() AS db_name')
         db_row = cursor.fetchone()
-        cursor.execute('SHOW TABLES LIKE %s', ('gym_members',))
-        tabla_miembros = cursor.fetchone()
-        cursor.execute('SHOW TABLES LIKE %s', ('gym_plans',))
-        tabla_planes = cursor.fetchone()
-        cursor.execute('SHOW TABLES LIKE %s', ('gym_subscriptions',))
-        tabla_subs = cursor.fetchone()
+
+        if is_postgres():
+            cursor.execute("SELECT to_regclass('public.gym_members') AS table_name")
+            tabla_miembros = cursor.fetchone()
+            cursor.execute("SELECT to_regclass('public.gym_plans') AS table_name")
+            tabla_planes = cursor.fetchone()
+            cursor.execute("SELECT to_regclass('public.gym_subscriptions') AS table_name")
+            tabla_subs = cursor.fetchone()
+        else:
+            cursor.execute('SHOW TABLES LIKE %s', ('gym_members',))
+            tabla_miembros = cursor.fetchone()
+            cursor.execute('SHOW TABLES LIKE %s', ('gym_plans',))
+            tabla_planes = cursor.fetchone()
+            cursor.execute('SHOW TABLES LIKE %s', ('gym_subscriptions',))
+            tabla_subs = cursor.fetchone()
+
         cursor.close()
         conn.close()
 
         return {
             'ok': True,
-            'database': db_row[0] if db_row else None,
-            'tabla_miembros': bool(tabla_miembros),
-            'tabla_planes': bool(tabla_planes),
-            'tabla_suscripciones': bool(tabla_subs),
+            'database': scalar_from_row(db_row),
+            'tabla_miembros': bool(scalar_from_row(tabla_miembros)),
+            'tabla_planes': bool(scalar_from_row(tabla_planes)),
+            'tabla_suscripciones': bool(scalar_from_row(tabla_subs)),
         }
     except Exception as e:
         return {
