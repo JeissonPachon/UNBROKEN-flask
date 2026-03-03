@@ -2,9 +2,8 @@ import os
 from datetime import date, timedelta
 from functools import wraps
 
-import MySQLdb.cursors
+import pymysql
 from flask import Flask, flash, redirect, render_template, request, session, url_for
-from flask_mysqldb import MySQL 
 from werkzeug.security import check_password_hash, generate_password_hash
 
 
@@ -36,8 +35,6 @@ app.config['MYSQL_PASSWORD'] = os.getenv('MYSQL_PASSWORD', 'admin')
 app.config['MYSQL_DB'] = os.getenv('MYSQL_DB', 'unbroken')
 app.config['MYSQL_PORT'] = int(os.getenv('MYSQL_PORT', '3306'))
 
-conexion = MySQL(app)
-
 ADMIN_USER = os.getenv('ADMIN_USER', 'admin')
 ADMIN_PASSWORD = os.getenv('ADMIN_PASSWORD', 'admin123')
 
@@ -56,29 +53,47 @@ def format_cop(value):
 app.jinja_env.filters['cop'] = format_cop
 
 
+def get_db_connection():
+    return pymysql.connect(
+        host=app.config['MYSQL_HOST'],
+        user=app.config['MYSQL_USER'],
+        password=app.config['MYSQL_PASSWORD'],
+        database=app.config['MYSQL_DB'],
+        port=app.config['MYSQL_PORT'],
+        charset='utf8mb4',
+        autocommit=False,
+    )
+
+
 def query_all(sql, params=()):
-    cursor = conexion.connection.cursor(MySQLdb.cursors.DictCursor)
+    conn = get_db_connection()
+    cursor = conn.cursor(pymysql.cursors.DictCursor)
     cursor.execute(sql, params)
     rows = cursor.fetchall()
     cursor.close()
+    conn.close()
     return rows
 
 
 def query_one(sql, params=()):
-    cursor = conexion.connection.cursor(MySQLdb.cursors.DictCursor)
+    conn = get_db_connection()
+    cursor = conn.cursor(pymysql.cursors.DictCursor)
     cursor.execute(sql, params)
     row = cursor.fetchone()
     cursor.close()
+    conn.close()
     return row
 
 
 def execute(sql, params=()):
-    cursor = conexion.connection.cursor()
+    conn = get_db_connection()
+    cursor = conn.cursor()
     cursor.execute(sql, params)
-    conexion.connection.commit()
+    conn.commit()
     last_id = cursor.lastrowid
     row_count = cursor.rowcount
     cursor.close()
+    conn.close()
     return last_id, row_count
 
 
@@ -90,7 +105,8 @@ def ensure_schema():
     if app.config.get('SCHEMA_READY'):
         return
 
-    cursor = conexion.connection.cursor()
+    conn = get_db_connection()
+    cursor = conn.cursor()
     cursor.execute(
         """
         CREATE TABLE IF NOT EXISTS gym_plans (
@@ -209,8 +225,9 @@ def ensure_schema():
                 (ADMIN_USER, generate_password_hash(ADMIN_PASSWORD), 'admin'),
             )
 
-    conexion.connection.commit()
+    conn.commit()
     cursor.close()
+    conn.close()
     app.config['SCHEMA_READY'] = True
 
 
@@ -863,7 +880,8 @@ def member_qr(document):
 @app.route('/db-test')
 def db_test():
     try:
-        cursor = conexion.connection.cursor()
+        conn = get_db_connection()
+        cursor = conn.cursor()
         cursor.execute('SELECT DATABASE() AS db_name')
         db_row = cursor.fetchone()
         cursor.execute('SHOW TABLES LIKE %s', ('gym_members',))
@@ -873,6 +891,7 @@ def db_test():
         cursor.execute('SHOW TABLES LIKE %s', ('gym_subscriptions',))
         tabla_subs = cursor.fetchone()
         cursor.close()
+        conn.close()
 
         return {
             'ok': True,
