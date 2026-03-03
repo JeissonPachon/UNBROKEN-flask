@@ -75,6 +75,7 @@
         <div class="panel-form" style="margin-top: 10px;">
             <input id="qrWhatsappPhone" type="text" placeholder="Teléfono WhatsApp (ej: 573001112233)">
             <button id="sendQrWhatsapp" type="button">Enviar por WhatsApp</button>
+            <button id="downloadQrJpg" type="button">Descargar QR JPG</button>
         </div>
     </div>
 </div>
@@ -91,6 +92,7 @@
         const memberDoc = document.getElementById('qrMemberDoc');
         const phoneInput = document.getElementById('qrWhatsappPhone');
         const sendWhatsappBtn = document.getElementById('sendQrWhatsapp');
+        const downloadQrBtn = document.getElementById('downloadQrJpg');
         const buttons = document.querySelectorAll('.show-qr-btn');
         let selectedName = '';
         let selectedDocument = '';
@@ -162,6 +164,39 @@
                 const base = normalizedPhone ? `https://wa.me/${normalizedPhone}` : 'https://wa.me/';
                 const url = `${base}?text=${encodeURIComponent(message)}`;
                 window.open(url, '_blank');
+            });
+        }
+
+        if (downloadQrBtn) {
+            downloadQrBtn.addEventListener('click', () => {
+                const canvas = qrBox.querySelector('canvas');
+                const img = qrBox.querySelector('img');
+                let jpgDataUrl = '';
+
+                if (canvas) {
+                    jpgDataUrl = canvas.toDataURL('image/jpeg', 0.92);
+                } else if (img) {
+                    const exportCanvas = document.createElement('canvas');
+                    exportCanvas.width = img.naturalWidth || 220;
+                    exportCanvas.height = img.naturalHeight || 220;
+                    const ctx = exportCanvas.getContext('2d');
+                    ctx.fillStyle = '#ffffff';
+                    ctx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
+                    ctx.drawImage(img, 0, 0);
+                    jpgDataUrl = exportCanvas.toDataURL('image/jpeg', 0.92);
+                }
+
+                if (!jpgDataUrl) {
+                    return;
+                }
+
+                const safeDocument = (selectedDocument || 'miembro').replace(/[^a-zA-Z0-9_-]/g, '_');
+                const link = document.createElement('a');
+                link.href = jpgDataUrl;
+                link.download = `qr_${safeDocument}.jpg`;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
             });
         }
 
