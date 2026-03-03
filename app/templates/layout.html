@@ -18,7 +18,7 @@
     </button>
 
     {% if session.get('is_authenticated') %}
-    <span class="top-auth-text">{{ 'Admin' if session.get('user_role') == 'admin' else 'Encargado' }}: {{ session.get('admin_user') }}</span>
+    <span class="top-auth-text">{{ 'Admin' if session.get('user_role') == 'admin' else 'Encargado' }}: {{ session.get('admin_user') or session.get('username') }}</span>
     <form action="{{ url_for('logout') }}" method="post" class="inline-form logout-trigger-wrap">
         <button type="submit" class="logout-trigger" aria-label="Cerrar sesión" title="Cerrar sesión">
             <svg class="logout-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">

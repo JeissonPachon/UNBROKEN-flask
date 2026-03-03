@@ -491,33 +491,45 @@ def dashboard():
 @app.route('/members')
 @admin_required
 def members_list():
-    members = query_all(
-        """
-        SELECT m.id, m.full_name, m.document, m.phone, m.email,
-               m.injuries, m.conditions_text,
-               m.emergency_contact_name, m.emergency_contact_phone,
-               s.remaining_sessions, s.status, s.end_date, p.name AS plan_name
-        FROM gym_members m
-        LEFT JOIN gym_subscriptions s ON s.id = (
-            SELECT gs.id
-            FROM gym_subscriptions gs
-            WHERE gs.member_id = m.id
-            ORDER BY gs.id DESC
-            LIMIT 1
+    members = []
+    try:
+        members = query_all(
+            """
+            SELECT m.id, m.full_name, m.document, m.phone, m.email,
+                   m.injuries, m.conditions_text,
+                   m.emergency_contact_name, m.emergency_contact_phone,
+                   s.remaining_sessions, s.status, s.end_date, p.name AS plan_name
+            FROM gym_members m
+            LEFT JOIN gym_subscriptions s ON s.id = (
+                SELECT gs.id
+                FROM gym_subscriptions gs
+                WHERE gs.member_id = m.id
+                ORDER BY gs.id DESC
+                LIMIT 1
+            )
+            LEFT JOIN gym_plans p ON p.id = s.plan_id
+            ORDER BY m.id DESC
+            """
         )
-        LEFT JOIN gym_plans p ON p.id = s.plan_id
-        ORDER BY m.id DESC
-        """
-    )
+    except Exception:
+        flash('No hay conexión con la base de datos. La vista de miembros está en modo limitado.', 'warning')
     return render_template('members_list.html', members=members)
 
 
 @app.route('/members/new', methods=['GET', 'POST'])
 @admin_required
 def members_new():
-    plans = query_all('SELECT id, name, sessions_per_month FROM gym_plans WHERE is_active = 1 ORDER BY name')
+    plans = []
+    try:
+        plans = query_all('SELECT id, name, sessions_per_month FROM gym_plans WHERE is_active = 1 ORDER BY name')
+    except Exception:
+        flash('No hay conexión con la base de datos. No es posible cargar planes en este momento.', 'warning')
 
     if request.method == 'POST':
+        if not plans:
+            flash('No se pudo registrar el miembro porque no hay conexión a base de datos.', 'danger')
+            return redirect(url_for('members_list'))
+
         full_name = request.form.get('full_name', '').strip()
         document = request.form.get('document', '').strip()
         phone = request.form.get('phone', '').strip()
@@ -725,15 +737,20 @@ def cancel_subscription():
 @app.route('/settings/plans')
 @admin_required
 def settings_plans():
-    plans = query_all('SELECT * FROM gym_plans ORDER BY id DESC')
-    staff_users = query_all(
-        """
-        SELECT id, username, is_active, created_at
-        FROM gym_admins
-        WHERE role = 'staff'
-        ORDER BY id DESC
-        """
-    )
+    plans = []
+    staff_users = []
+    try:
+        plans = query_all('SELECT * FROM gym_plans ORDER BY id DESC')
+        staff_users = query_all(
+            """
+            SELECT id, username, is_active, created_at
+            FROM gym_admins
+            WHERE role = 'staff'
+            ORDER BY id DESC
+            """
+        )
+    except Exception:
+        flash('No hay conexión con la base de datos. Configuración en modo limitado.', 'warning')
     return render_template('plans_settings.html', plans=plans, staff_users=staff_users)
 
 
