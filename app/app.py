@@ -74,6 +74,14 @@ def sql_today():
     return 'CURRENT_DATE' if is_postgres() else 'CURDATE()'
 
 
+def sql_true():
+    return 'TRUE' if is_postgres() else '1'
+
+
+def active_value():
+    return True if is_postgres() else 1
+
+
 def scalar_from_row(row):
     if row is None:
         return None
@@ -350,11 +358,11 @@ def ensure_schema():
     if plans_count == 0:
         cursor.execute(
             """
-            INSERT INTO gym_plans (name, sessions_per_month, price, is_active)
+            INSERT INTO gym_plans (name, sessions_per_month, price)
             VALUES
-                ('Plan Básico', 8, 80.00, 1),
-                ('Plan Intermedio', 12, 120.00, 1),
-                ('Plan Full', 20, 180.00, 1)
+                ('Plan Básico', 8, 80.00),
+                ('Plan Intermedio', 12, 120.00),
+                ('Plan Full', 20, 180.00)
             """
         )
 
@@ -362,16 +370,16 @@ def ensure_schema():
     admins_count = scalar_from_row(cursor.fetchone())
     if admins_count == 0:
         cursor.execute(
-            'INSERT INTO gym_admins (username, password_hash, role, is_active) VALUES (%s, %s, %s, 1)',
-            (ADMIN_USER, generate_password_hash(ADMIN_PASSWORD), 'admin'),
+            'INSERT INTO gym_admins (username, password_hash, role, is_active) VALUES (%s, %s, %s, %s)',
+            (ADMIN_USER, generate_password_hash(ADMIN_PASSWORD), 'admin', active_value()),
         )
     else:
         cursor.execute('SELECT id FROM gym_admins WHERE username = %s', (ADMIN_USER,))
         env_admin = cursor.fetchone()
         if not env_admin:
             cursor.execute(
-                'INSERT INTO gym_admins (username, password_hash, role, is_active) VALUES (%s, %s, %s, 1)',
-                (ADMIN_USER, generate_password_hash(ADMIN_PASSWORD), 'admin'),
+                'INSERT INTO gym_admins (username, password_hash, role, is_active) VALUES (%s, %s, %s, %s)',
+                (ADMIN_USER, generate_password_hash(ADMIN_PASSWORD), 'admin', active_value()),
             )
 
     conn.commit()
@@ -413,7 +421,7 @@ def index ():
     active_plans = []
     try:
         active_plans = query_all(
-            'SELECT id, name, sessions_per_month, price FROM gym_plans WHERE is_active = 1 ORDER BY id ASC'
+            f'SELECT id, name, sessions_per_month, price FROM gym_plans WHERE is_active = {sql_true()} ORDER BY id ASC'
         )
     except Exception:
         active_plans = []
@@ -441,7 +449,7 @@ def login():
 
     try:
         admin = query_one(
-            'SELECT id, username, password_hash, role FROM gym_admins WHERE username = %s AND is_active = 1',
+            f'SELECT id, username, password_hash, role FROM gym_admins WHERE username = %s AND is_active = {sql_true()}',
             (username,),
         )
     except Exception:
@@ -516,7 +524,7 @@ def dashboard():
         )
         active_count = active_count_row['total'] if active_count_row else 0
 
-        plans = query_all('SELECT id, name FROM gym_plans WHERE is_active = 1 ORDER BY name')
+        plans = query_all(f'SELECT id, name FROM gym_plans WHERE is_active = {sql_true()} ORDER BY name')
         recent_members = query_all(
             """
             SELECT m.id, m.full_name, m.document, s.remaining_sessions, s.status, p.name AS plan_name
@@ -690,7 +698,7 @@ def members_list():
 def members_new():
     plans = []
     try:
-        plans = query_all('SELECT id, name, sessions_per_month FROM gym_plans WHERE is_active = 1 ORDER BY name')
+        plans = query_all(f'SELECT id, name, sessions_per_month FROM gym_plans WHERE is_active = {sql_true()} ORDER BY name')
     except Exception:
         flash('No hay conexión con la base de datos. No es posible cargar planes en este momento.', 'warning')
 
@@ -713,7 +721,7 @@ def members_new():
             flash('Nombre, documento y plan son obligatorios.', 'danger')
             return render_template('members_form.html', plans=plans)
 
-        plan = query_one('SELECT id, sessions_per_month FROM gym_plans WHERE id = %s AND is_active = 1', (plan_id,))
+        plan = query_one(f'SELECT id, sessions_per_month FROM gym_plans WHERE id = %s AND is_active = {sql_true()}', (plan_id,))
         if not plan:
             flash('Plan inválido.', 'danger')
             return render_template('members_form.html', plans=plans)
@@ -860,7 +868,7 @@ def renew_subscription():
         )
         plan_id = latest['plan_id'] if latest else None
 
-    plan = query_one('SELECT id, sessions_per_month FROM gym_plans WHERE id = %s AND is_active = 1', (plan_id,))
+    plan = query_one(f'SELECT id, sessions_per_month FROM gym_plans WHERE id = %s AND is_active = {sql_true()}', (plan_id,))
     if not plan:
         flash('Plan inválido para renovación.', 'danger')
         return redirect(url_for('dashboard'))
@@ -935,8 +943,8 @@ def settings_plans_create():
         return redirect(url_for('settings_plans'))
 
     execute(
-        'INSERT INTO gym_plans (name, sessions_per_month, price, is_active) VALUES (%s, %s, %s, 1)',
-        (name, int(sessions_per_month), float(price)),
+        'INSERT INTO gym_plans (name, sessions_per_month, price, is_active) VALUES (%s, %s, %s, %s)',
+        (name, int(sessions_per_month), float(price), active_value()),
     )
     flash('Plan creado correctamente.', 'success')
     return redirect(url_for('settings_plans'))
@@ -969,7 +977,7 @@ def settings_plans_toggle(plan_id):
         flash('Plan no encontrado.', 'danger')
         return redirect(url_for('settings_plans'))
 
-    new_state = 0 if plan['is_active'] else 1
+    new_state = (not bool(plan['is_active'])) if is_postgres() else (0 if plan['is_active'] else 1)
     execute('UPDATE gym_plans SET is_active = %s WHERE id = %s', (new_state, plan_id))
     flash('Estado del plan actualizado.', 'success')
     return redirect(url_for('settings_plans'))
@@ -1008,7 +1016,7 @@ def settings_admin_password():
         return redirect(url_for('settings_plans'))
 
     username = session.get('admin_user')
-    admin = query_one('SELECT id, password_hash FROM gym_admins WHERE username = %s AND is_active = 1', (username,))
+    admin = query_one(f'SELECT id, password_hash FROM gym_admins WHERE username = %s AND is_active = {sql_true()}', (username,))
     if not admin:
         flash('Usuario admin no encontrado.', 'danger')
         return redirect(url_for('settings_plans'))
@@ -1045,8 +1053,8 @@ def settings_staff_create():
         return redirect(url_for('settings_plans'))
 
     execute(
-        'INSERT INTO gym_admins (username, password_hash, role, is_active) VALUES (%s, %s, %s, 1)',
-        (username, generate_password_hash(password), 'staff'),
+        'INSERT INTO gym_admins (username, password_hash, role, is_active) VALUES (%s, %s, %s, %s)',
+        (username, generate_password_hash(password), 'staff', active_value()),
     )
     flash('Encargado creado correctamente.', 'success')
     return redirect(url_for('settings_plans'))
@@ -1060,7 +1068,7 @@ def settings_staff_toggle(user_id):
         flash('Encargado no encontrado.', 'danger')
         return redirect(url_for('settings_plans'))
 
-    new_state = 0 if user['is_active'] else 1
+    new_state = (not bool(user['is_active'])) if is_postgres() else (0 if user['is_active'] else 1)
     execute('UPDATE gym_admins SET is_active = %s WHERE id = %s', (new_state, user_id))
     flash('Estado del encargado actualizado.', 'success')
     return redirect(url_for('settings_plans'))
