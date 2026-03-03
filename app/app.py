@@ -34,6 +34,7 @@ app.config['MYSQL_USER'] = os.getenv('MYSQL_USER', 'root')
 app.config['MYSQL_PASSWORD'] = os.getenv('MYSQL_PASSWORD', 'admin')
 app.config['MYSQL_DB'] = os.getenv('MYSQL_DB', 'unbroken')
 app.config['MYSQL_PORT'] = int(os.getenv('MYSQL_PORT', '3306'))
+app.config['AUTO_SCHEMA_INIT'] = os.getenv('AUTO_SCHEMA_INIT', '0' if os.getenv('VERCEL') else '1') == '1'
 
 ADMIN_USER = os.getenv('ADMIN_USER', 'admin')
 ADMIN_PASSWORD = os.getenv('ADMIN_PASSWORD', 'admin123')
@@ -256,13 +257,18 @@ def admin_required(view):
 
 @app.before_request
 def before_request():
-    ensure_schema()
+    if app.config.get('AUTO_SCHEMA_INIT'):
+        ensure_schema()
 
 @app.route('/')
 def index ():
-    active_plans = query_all(
-        'SELECT id, name, sessions_per_month, price FROM gym_plans WHERE is_active = 1 ORDER BY id ASC'
-    )
+    active_plans = []
+    try:
+        active_plans = query_all(
+            'SELECT id, name, sessions_per_month, price FROM gym_plans WHERE is_active = 1 ORDER BY id ASC'
+        )
+    except Exception:
+        active_plans = []
     data = {
         'titulo': 'UNBROKEN',
         'bienvenida': 'Bienvenido a UNBROKEN',
