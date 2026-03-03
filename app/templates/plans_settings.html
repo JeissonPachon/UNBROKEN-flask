@@ -95,7 +95,7 @@
                     </form>
                 </td>
                 <td>{{ plan.sessions_per_month }}</td>
-                <td>${{ "%.2f"|format(plan.price) }}</td>
+                <td>{{ plan.price|cop }}</td>
                 <td>{{ 'Sí' if plan.is_active else 'No' }}</td>
                 <td class="actions-row">
                     <form method="post" action="{{ url_for('settings_plans_toggle', plan_id=plan.id) }}">

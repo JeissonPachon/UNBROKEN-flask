@@ -18,9 +18,17 @@
     </button>
 
     {% if session.get('is_authenticated') %}
+    <span class="top-auth-text">{{ 'Admin' if session.get('user_role') == 'admin' else 'Encargado' }}: {{ session.get('admin_user') }}</span>
+    <form action="{{ url_for('logout') }}" method="post" class="inline-form logout-trigger-wrap">
+        <button type="submit" class="logout-trigger" aria-label="Cerrar sesión" title="Cerrar sesión">
+            <svg class="logout-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M12 3v8" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"></path>
+                <path d="M7.4 5.9a8 8 0 1 0 9.2 0" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"></path>
+            </svg>
+        </button>
+    </form>
     <section class="admin-strip">
         <div class="admin-strip-content">
-            <span class="admin-badge">{{ 'Admin' if session.get('user_role') == 'admin' else 'Encargado' }}: {{ session.get('admin_user') }}</span>
             <nav class="admin-nav">
                 <a class="link-btn" href="{{ url_for('dashboard') }}">Panel</a>
                 {% if session.get('user_role') == 'admin' %}
@@ -28,13 +36,15 @@
                     <a class="link-btn" href="{{ url_for('settings_plans') }}">Configuración</a>
                 {% endif %}
             </nav>
-            <form action="{{ url_for('logout') }}" method="post" class="inline-form admin-logout">
-                <button type="submit">Cerrar sesión</button>
-            </form>
         </div>
     </section>
     {% else %}
-    <button id="openLoginModal" type="button" class="login-trigger">Sesion</button>
+    <button id="openLoginModal" type="button" class="login-trigger" aria-label="Iniciar sesión" title="Iniciar sesión">
+        <svg class="login-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <circle cx="12" cy="8" r="3.2" fill="none" stroke="currentColor" stroke-width="1.8"></circle>
+            <path d="M5.5 19a6.5 6.5 0 0 1 13 0" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path>
+        </svg>
+    </button>
 
     <div id="loginModal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="loginModalTitle">
         <div class="modal-card">

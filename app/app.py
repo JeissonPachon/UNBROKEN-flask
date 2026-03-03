@@ -42,6 +42,20 @@ ADMIN_USER = os.getenv('ADMIN_USER', 'admin')
 ADMIN_PASSWORD = os.getenv('ADMIN_PASSWORD', 'admin123')
 
 
+def format_cop(value):
+    try:
+        amount = float(value)
+    except (TypeError, ValueError):
+        amount = 0
+
+    rounded = int(round(amount))
+    formatted = f"{rounded:,}".replace(",", ".")
+    return f"$ {formatted} COP"
+
+
+app.jinja_env.filters['cop'] = format_cop
+
+
 def query_all(sql, params=()):
     cursor = conexion.connection.cursor(MySQLdb.cursors.DictCursor)
     cursor.execute(sql, params)

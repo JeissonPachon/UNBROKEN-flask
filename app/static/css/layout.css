@@ -72,26 +72,28 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    min-height: 92px;
-    padding: 18px 24px;
-    background: var(--topbar-bg);
-    color: var(--topbar-text);
-    position: sticky;
-    top: 0;
-    z-index: 35;
-    border-bottom: 1px solid var(--border);
+    min-height: 76px;
+    padding: 14px 24px 12px;
+    background: transparent;
+    color: var(--text);
+    position: relative;
+    z-index: 20;
 }
 
 .brand {
-    font-size: clamp(24px, 3vw, 34px);
-    font-weight: 700;
+    font-size: clamp(22px, 3vw, 32px);
+    font-weight: 800;
     letter-spacing: 2px;
 }
 
 .brand-link {
-    color: var(--topbar-text);
+    color: var(--topbar-bg);
     text-decoration: none;
-    transition: opacity 0.2s ease;
+    transition: opacity 0.2s ease, color 0.2s ease;
+}
+
+[data-theme="dark"] .brand-link {
+    color: #3dcf5b;
 }
 
 .brand-link:hover {
@@ -109,7 +111,7 @@ body {
     margin: 0 auto;
     padding: 10px 16px;
     display: grid;
-    grid-template-columns: auto 1fr auto;
+    grid-template-columns: 1fr;
     align-items: center;
     gap: 12px;
 }
@@ -131,12 +133,78 @@ body {
     top: 10px;
     right: 16px;
     z-index: 40;
-    width: auto;
-    padding: 8px 14px;
-    border-radius: 999px;
-    background: var(--button-bg);
-    color: var(--button-text);
+    width: 36px;
+    height: 36px;
+    min-height: 36px;
+    padding: 0;
+    border-radius: 50%;
+    background: var(--surface);
+    color: var(--text);
     border: 1px solid var(--border);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: var(--shadow);
+}
+
+.login-trigger:hover,
+.login-trigger:focus-visible,
+.logout-trigger:hover,
+.logout-trigger:focus-visible {
+    background: var(--surface-alt);
+    color: var(--text);
+}
+
+.login-icon,
+.logout-icon {
+    width: 18px;
+    height: 18px;
+    display: block;
+}
+
+.top-auth-text {
+    position: fixed;
+    top: 10px;
+    right: 56px;
+    z-index: 40;
+    max-width: 260px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--muted);
+}
+
+.logout-trigger {
+    position: fixed;
+    top: 14px;
+    right: 16px;
+    z-index: 40;
+    width: 24px;
+    height: 24px;
+    min-height: 24px;
+    padding: 0;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    color: var(--danger-bg);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: none;
+}
+
+.logout-trigger:hover,
+.logout-trigger:focus-visible {
+    background: transparent;
+    color: var(--danger-bg-hover);
+    box-shadow: none;
+}
+
+.logout-icon {
+    width: 20px;
+    height: 20px;
 }
 
 .theme-toggle {
@@ -699,20 +767,39 @@ tbody tr:hover {
 
 @media (max-width: 760px) {
     .topbar {
-        min-height: 74px;
-        padding: 14px 12px;
+        min-height: 62px;
+        padding: 10px 12px 8px;
     }
 
     .brand {
-        font-size: 22px;
+        font-size: 20px;
         letter-spacing: 1px;
     }
 
     .login-trigger {
         top: 8px;
         right: 10px;
-        padding: 6px 12px;
-        font-size: 13px;
+        width: 34px;
+        height: 34px;
+        min-height: 34px;
+    }
+
+    .logout-trigger {
+        top: 12px;
+        right: 10px;
+        width: 22px;
+        height: 22px;
+        min-height: 22px;
+    }
+
+    .login-icon,
+    .logout-icon {
+        width: 16px;
+        height: 16px;
+    }
+
+    .top-auth-text {
+        display: none;
     }
 
     .theme-toggle {
@@ -738,22 +825,12 @@ tbody tr:hover {
         gap: 8px;
     }
 
-    .admin-badge {
-        justify-self: center;
-    }
-
     .admin-nav {
         width: 100%;
         justify-content: center;
     }
 
-    .admin-nav .link-btn,
-    .admin-logout button {
-        width: 100%;
-    }
-
-    .admin-logout {
-        justify-self: stretch;
+    .admin-nav .link-btn {
         width: 100%;
     }
 

@@ -196,9 +196,9 @@
 
         const parsed = JSON.parse(payload.textContent || '{}');
         const labels = parsed.labels || [];
-        const members = parsed.members || [];
-        const sessions = parsed.sessions || [];
-        const average = parsed.average || [];
+        const members = labels.map(() => 0);
+        const sessions = labels.map(() => 0);
+        const average = labels.map(() => 0);
 
         const css = getComputedStyle(document.documentElement);
         const border = css.getPropertyValue('--border').trim() || '#cccccc';

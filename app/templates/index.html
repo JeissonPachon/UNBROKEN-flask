@@ -32,7 +32,7 @@
 			<div class="plan-card">
 				<h3>{{ plan.name }}</h3>
 				<p class="plan-sessions">{{ plan.sessions_per_month }} sesiones / mes</p>
-				<p class="plan-price">${{ "%.2f"|format(plan.price) }}</p>
+				<p class="plan-price">{{ plan.price|cop }}</p>
 			</div>
 			{% endfor %}
 		</div>
